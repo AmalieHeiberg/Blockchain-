@@ -1,11 +1,38 @@
 
 const SHA256 = require('crypto-js/sha256');
+const EC = require('elliptic').ec;
+const ec = new EC('secp256k1'); // basis of bitcoin wallets
 
 class Transaction{
     constructor(fromAddress, toAddress, amount){
         this.fromAddress = fromAddress;
         this.toAddress = toAddress;
         this.amount = amount;
+    }
+
+    calculateHash(){
+        return SHA256(this.fromAddress + this.toAddress + this.toAddress).toString();
+    }
+
+    signTransaction(signingKey){
+        if(signingKey.getPublic('hex') !== this.fromAddress){
+            throw new Error('You cannot sign transactions for other wallets!');
+        }
+
+        const hashTx = this.calculateHash();
+        const sig = signingKey.sign(hashTx, 'base64');
+        this.signature = sig.toDER('hex');
+    }
+
+    isValid(){
+        if(this.fromAddress == null){
+            return true;
+        }
+        if(!this.signature || this.signature.length == 0){
+            throw new Error('No signature in this transation');
+        }
+        const publicKey = ec.keyFromPublic(this.fromAddress, 'hex');
+        return publicKey.verify(this.calculateHash(), this.signature);
     }
 }
 
@@ -30,7 +57,17 @@ class Block{
         }
         console.log("Block mined: " + this.hash);
     }
+
+    hasValidTransactions(){
+        for(const tx of this.transactions){
+            if(!tx.isValid()){
+                return false;
+            }
+        }
+        return true;
+    }
 }
+
 
 
 class Blockchain{
@@ -54,20 +91,30 @@ class Blockchain{
    //     newBlock.mineBlock(this.difficulty)
     //    this.chain.push(newBlock);
    // }
-    createTransaction(transaction){
+    addTransaction(transaction){
+
+        if(!transaction.fromAddress || !transaction.toAddress){
+            throw new Error('Transaction must include from and to address');
+        }
+
+        if(!transaction.isValid()){
+            throw new Error('Cannot add invalif transaction to chain')
+        }
+
         this.pendingTransactions.push(transaction);
     }
 
     minePendingTransactions(miningRewardAddress){
-        let block = new Block(Date.now(), this.pendingTransactions);
+        const rewardTx = new Transaction(null, miningRewardAddress, this.miningReward);
+        this.pendingTransactions.push(rewardTx);
+
+        let block = new Block(Date.now(), this.pendingTransactions, this.getLatestBlock().hash);
         block.mineBlock(this.difficulty);
 
         console.log('Block successfully mined!')
         this.chain.push(block);
 
-        this.pendingTransactions = [
-            new Transaction(null, miningRewardAddress, this.miningReward)
-        ];
+        this.pendingTransactions = [];
     }
 
     getBalanceofAddress(address){
@@ -90,6 +137,11 @@ class Blockchain{
         for (let i = 1; i< this.chain.length; i++){
             const currentBlock = this.chain[i];
             const previousBlock = this.chain[i-1];
+
+            if(!currentBlock.hasValidTransactions()){
+                return false;
+            }
+
             if(currentBlock.hash !== currentBlock.calculateHash()){
                 return false; 
             }
@@ -102,24 +154,5 @@ class Blockchain{
     }
 }
 
-let fooChain = new Blockchain();
-
-//console.log('Mining block 1... ');
-//fooChain.addBlock(new Block(1, "10/07/2017", {amount: 4}));
-
-//console.log('Mining block 2... '); 
-//fooChain.addBlock(new Block(2, "12/07/2017", {amount: 12}));
-
-//console.log(JSON.stringify(fooChain, null, 4));
-//console.log('Is blockchain valid? ' + fooChain.isChainValid()) 
-
-fooChain.createTransaction(new Transaction('address1', 'address2', 100));
-fooChain.createTransaction(new Transaction('address2', 'address1', 50));
-
-console.log('\nStarting the miner.. ');
-fooChain.minePendingTransactions('amalies-address');
-console.log('\n Balance of Amalie is ', fooChain.getBalanceofAddress('amalies-address'));
-
-console.log('\nStarting the miner.. ');
-fooChain.minePendingTransactions('amalies-address');
-console.log('\n Balance of Amalie is ', fooChain.getBalanceofAddress('amalies-address'));
+module.exports.Blockchain = Blockchain;
+module.exports.Transaction = Transaction;
